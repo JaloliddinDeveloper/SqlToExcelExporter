@@ -1,0 +1,32 @@
+﻿@model SqlToExcelExporter.Models.ExportRequest
+
+<h2>SQL Data Export to Excel</h2>
+
+<form asp-action="Index" method="post">
+    <div>
+        <label>Database Connection String</label><br />
+        <input asp-for="ConnectionString" style="width:600px" />
+    </div>
+    <br />
+    <div>
+        <label>SQL Query</label><br />
+        <textarea asp-for="SqlQuery" rows="6" cols="80"></textarea>
+    </div>
+    <br />
+    <div>
+        <label>Excel File Name</label><br />
+        <input asp-for="FileName" />
+    </div>
+    <br />
+    <button type="submit">Export to Excel</button>
+</form>
+
+@if (!ViewData.ModelState.IsValid)
+{
+    <div style="color:red">
+        @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+        {
+            <p>@error.ErrorMessage</p>
+        }
+    </div>
+}
