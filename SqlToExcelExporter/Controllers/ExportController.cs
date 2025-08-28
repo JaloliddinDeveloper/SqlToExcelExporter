@@ -11,10 +11,19 @@ namespace SqlToExcelExporter.Controllers
 {
     public class ExportController : Controller
     {
+        private static int ProgressCount = 0;
+        private static bool ExportDone = false;
+
         [HttpGet]
         public IActionResult Index()
         {
             return View(new ExportRequest());
+        }
+
+        [HttpGet]
+        public IActionResult GetProgress()
+        {
+            return Json(new { rows = ProgressCount, done = ExportDone });
         }
 
         [HttpPost]
@@ -27,6 +36,9 @@ namespace SqlToExcelExporter.Controllers
                 ModelState.AddModelError("", "Barcha maydonlarni to‘ldiring!");
                 return View(request);
             }
+
+            ProgressCount = 0;
+            ExportDone = false;
 
             using (SqlConnection conn = new SqlConnection(request.ConnectionString))
             {
@@ -52,6 +64,8 @@ namespace SqlToExcelExporter.Controllers
                         rowsBuffer.Add(row);
                         totalRow++;
 
+                        ProgressCount = totalRow; 
+
                         if (rowsBuffer.Count == maxRowsPerSheet)
                         {
                             WriteSheet(workbook, "Sheet" + sheetIndex, columnNames, rowsBuffer);
@@ -65,9 +79,11 @@ namespace SqlToExcelExporter.Controllers
                         WriteSheet(workbook, "Sheet" + sheetIndex, columnNames, rowsBuffer);
                     }
 
+                    ExportDone = true;
+
                     using (var stream = new MemoryStream())
                     {
-                        workbook.SaveAs(stream); 
+                        workbook.SaveAs(stream);
                         var content = stream.ToArray();
                         return File(content,
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

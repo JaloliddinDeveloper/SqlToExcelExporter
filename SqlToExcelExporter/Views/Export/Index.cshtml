@@ -2,22 +2,22 @@
 
 <div class="d-flex">
     <div class="flex-grow-1 p-3">
-        <h2>SQL Data Export to Excel</h2>
+        <h2 class="mb-4 text-primary">📊 SQL Data Export to Excel</h2>
 
-        <form asp-action="Index" method="post">
+        <form asp-action="Index" method="post" onsubmit="showProgress()">
             <div class="mb-3">
-                <label class="form-label">Database Connection String</label>
-                <input asp-for="ConnectionString" class="form-control" style="width:600px" />
+                <label class="form-label fw-bold">Database Connection String</label>
+                <input asp-for="ConnectionString" class="form-control w-75" />
             </div>
 
             <div class="mb-3">
-                <label class="form-label">SQL Query</label>
-                <textarea asp-for="SqlQuery" id="sqlQuery" rows="6" cols="80" class="form-control"></textarea>
+                <label class="form-label fw-bold">SQL Query</label>
+                <textarea asp-for="SqlQuery" id="sqlQuery" rows="6" class="form-control w-75"></textarea>
             </div>
 
             <div class="mb-3">
-                <label class="form-label">Query Name</label>
-                <input type="text" id="queryName" class="form-control" placeholder="Masalan: Top 100 Students" />
+                <label class="form-label fw-bold">Query Name</label>
+                <input type="text" id="queryName" class="form-control w-75" placeholder="Masalan: Top 100 Students" />
             </div>
 
             <div class="mb-3">
@@ -25,16 +25,26 @@
             </div>
 
             <div class="mb-3">
-                <label class="form-label">Excel File Name</label>
-                <input asp-for="FileName" class="form-control" />
+                <label class="form-label fw-bold">Excel File Name</label>
+                <input asp-for="FileName" class="form-control w-50" placeholder="Masalan: Report_2025" />
             </div>
 
-            <button type="submit" class="btn btn-primary">Export to Excel</button>
+            <button type="submit" class="btn btn-primary fw-bold px-4">🚀 Export to Excel</button>
         </form>
+
+        <div id="progressBox" style="display:none; margin-top:20px;">
+            <div class="progress" style="height:28px;">
+                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                     role="progressbar" style="width: 0%">
+                    0%
+                </div>
+            </div>
+            <p id="progressText" class="mt-2 text-primary">⏳ Ma’lumotlar ko‘chirilmoqda...</p>
+        </div>
 
         @if (!ViewData.ModelState.IsValid)
         {
-            <div style="color:red">
+            <div class="mt-3 alert alert-danger">
                 @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
                 {
                     <p>@error.ErrorMessage</p>
@@ -43,81 +53,121 @@
         }
     </div>
 
-    <div id="queriesPanel" class="border-start p-3"
-         style="width:300px; background:#f8f9fa; height:100vh;">
-        <h5>📂 Saved Queries</h5>
-        <ul id="queriesList" class="list-group"
-            style="max-height:400px; overflow-y:auto;"></ul>
+    <div id="queriesPanel" class="border-start p-3 bg-light"
+         style="width:300px; height:100vh; overflow-y:auto;">
+        <h5 class="mb-3">📂 Saved Queries</h5>
+        <ul id="queriesList" class="list-group"></ul>
     </div>
 </div>
 
 @section Scripts {
     <script>
         function getQueries() {
-            return JSON.parse(localStorage.getItem("savedQueries") || "[]");
+            return JSON.parse(localStorage.getItem("savedQueries") || "[]")
+                .filter(q => q && q.name && q.sql);
         }
 
         function saveQuery() {
-            var query = document.getElementById("sqlQuery").value.trim();
-            var name = document.getElementById("queryName").value.trim();
+            let sql = document.getElementById("sqlQuery").value.trim();
+            let name = document.getElementById("queryName").value.trim();
 
-            if (!query) {
-                alert("Query yozilmagan!");
-                return;
-            }
-            if (!name) {
-                alert("Query nomini yozing!");
-                return;
-            }
+            if (!sql) return alert("❌ SQL query yozilmagan!");
+            if (!name) return alert("❌ Query nomini yozing!");
 
-            var queries = getQueries();
-            queries.push({ name: name, sql: query });
+            let queries = getQueries();
+
+            if (queries.length >= 10) {
+                queries.shift(); 
+            }
+            queries.push({ name: name, sql: sql });
+
             localStorage.setItem("savedQueries", JSON.stringify(queries));
             loadQueries();
+
             document.getElementById("queryName").value = "";
         }
 
         function deleteQuery(index) {
             if (confirm("Ushbu queryni o‘chirishni xohlaysizmi?")) {
-                var queries = getQueries();
-                queries.splice(index, 1); 
+                let queries = getQueries();
+                queries.splice(index, 1);
                 localStorage.setItem("savedQueries", JSON.stringify(queries));
                 loadQueries();
             }
         }
 
         function loadQueries() {
-            var list = document.getElementById("queriesList");
+            let list = document.getElementById("queriesList");
             list.innerHTML = "";
-            var queries = getQueries();
+            let queries = getQueries();
 
-            if (queries.length > 0) {
-                queries.forEach((q, idx) => {
-                    if (!q || !q.name) return;
-
-                    var li = document.createElement("li");
-                    li.className = "list-group-item d-flex justify-content-between align-items-center";
-
-                    var span = document.createElement("span");
-                    span.innerHTML = `<strong>${q.name}</strong>`;
-                    span.style.cursor = "pointer";
-                    span.onclick = function () {
-                        document.getElementById("sqlQuery").value = q.sql;
-                    };
-
-                    var delBtn = document.createElement("button");
-                    delBtn.className = "btn btn-sm btn-outline-danger";
-                    delBtn.innerHTML = "❌";
-                    delBtn.onclick = function (e) {
-                        e.stopPropagation(); 
-                        deleteQuery(idx);
-                    };
-
-                    li.appendChild(span);
-                    li.appendChild(delBtn);
-                    list.appendChild(li);
-                });
+            if (queries.length === 0) {
+                list.innerHTML = "<li class='list-group-item text-muted'>Hech qanday query saqlanmagan</li>";
+                return;
             }
+
+            queries.forEach((q, idx) => {
+                let li = document.createElement("li");
+                li.className = "list-group-item d-flex justify-content-between align-items-center";
+
+                let span = document.createElement("span");
+                span.innerHTML = `<strong>${q.name}</strong>`;
+                span.style.cursor = "pointer";
+                span.onclick = () => {
+                    document.getElementById("sqlQuery").value = q.sql;
+
+                    document.querySelectorAll("#queriesList li").forEach(x => x.classList.remove("active"));
+                    li.classList.add("active");
+                };
+
+                let delBtn = document.createElement("button");
+                delBtn.className = "btn btn-sm btn-outline-danger";
+                delBtn.innerHTML = "❌";
+                delBtn.onclick = e => { e.stopPropagation(); deleteQuery(idx); };
+
+                li.appendChild(span);
+                li.appendChild(delBtn);
+                list.appendChild(li);
+            });
+        }
+
+        let progressTimer = null;
+
+        function pollProgress() {
+            fetch('/Export/GetProgress')
+                .then(r => r.json())
+                .then(data => {
+                    let bar = document.getElementById("progressBar");
+                    let txt = document.getElementById("progressText");
+
+                    if (data.done) {
+                        clearTimeout(progressTimer);
+                        txt.innerText = "✅ Eksport yakunlandi!";
+                        bar.style.width = "100%";
+                        bar.innerText = "100%";
+                        bar.classList.remove("progress-bar-animated");
+                        return;
+                    }
+
+                    let percent = data.total > 0 ? Math.floor((data.rows / data.total) * 100) : 0;
+                    bar.style.width = percent + "%";
+                    bar.innerText = percent + "%";
+                    txt.innerText = `⏳ ${data.rows.toLocaleString()} qator ko‘chirildi...`;
+                })
+                .catch(() => clearTimeout(progressTimer));
+
+            progressTimer = setTimeout(pollProgress, 1000);
+        }
+
+        function showProgress() {
+            document.getElementById("progressBox").style.display = "block";
+            document.getElementById("progressText").innerText = "⏳ Ma’lumotlar tayyorlanmoqda...";
+            let bar = document.getElementById("progressBar");
+            bar.style.width = "0%";
+            bar.innerText = "0%";
+            bar.classList.add("progress-bar-animated");
+
+            pollProgress();
         }
 
         document.addEventListener("DOMContentLoaded", loadQueries);
