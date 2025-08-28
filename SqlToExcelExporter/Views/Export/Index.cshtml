@@ -1,32 +1,125 @@
 ﻿@model SqlToExcelExporter.Models.ExportRequest
 
-<h2>SQL Data Export to Excel</h2>
+<div class="d-flex">
+    <div class="flex-grow-1 p-3">
+        <h2>SQL Data Export to Excel</h2>
 
-<form asp-action="Index" method="post">
-    <div>
-        <label>Database Connection String</label><br />
-        <input asp-for="ConnectionString" style="width:600px" />
-    </div>
-    <br />
-    <div>
-        <label>SQL Query</label><br />
-        <textarea asp-for="SqlQuery" rows="6" cols="80"></textarea>
-    </div>
-    <br />
-    <div>
-        <label>Excel File Name</label><br />
-        <input asp-for="FileName" />
-    </div>
-    <br />
-    <button type="submit">Export to Excel</button>
-</form>
+        <form asp-action="Index" method="post">
+            <div class="mb-3">
+                <label class="form-label">Database Connection String</label>
+                <input asp-for="ConnectionString" class="form-control" style="width:600px" />
+            </div>
 
-@if (!ViewData.ModelState.IsValid)
-{
-    <div style="color:red">
-        @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+            <div class="mb-3">
+                <label class="form-label">SQL Query</label>
+                <textarea asp-for="SqlQuery" id="sqlQuery" rows="6" cols="80" class="form-control"></textarea>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Query Name</label>
+                <input type="text" id="queryName" class="form-control" placeholder="Masalan: Top 100 Students" />
+            </div>
+
+            <div class="mb-3">
+                <button type="button" class="btn btn-secondary" onclick="saveQuery()">💾 Save Query</button>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Excel File Name</label>
+                <input asp-for="FileName" class="form-control" />
+            </div>
+
+            <button type="submit" class="btn btn-primary">Export to Excel</button>
+        </form>
+
+        @if (!ViewData.ModelState.IsValid)
         {
-            <p>@error.ErrorMessage</p>
+            <div style="color:red">
+                @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+                {
+                    <p>@error.ErrorMessage</p>
+                }
+            </div>
         }
     </div>
+
+    <div id="queriesPanel" class="border-start p-3"
+         style="width:300px; background:#f8f9fa; height:100vh;">
+        <h5>📂 Saved Queries</h5>
+        <ul id="queriesList" class="list-group"
+            style="max-height:400px; overflow-y:auto;"></ul>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        function getQueries() {
+            return JSON.parse(localStorage.getItem("savedQueries") || "[]");
+        }
+
+        function saveQuery() {
+            var query = document.getElementById("sqlQuery").value.trim();
+            var name = document.getElementById("queryName").value.trim();
+
+            if (!query) {
+                alert("Query yozilmagan!");
+                return;
+            }
+            if (!name) {
+                alert("Query nomini yozing!");
+                return;
+            }
+
+            var queries = getQueries();
+            queries.push({ name: name, sql: query });
+            localStorage.setItem("savedQueries", JSON.stringify(queries));
+            loadQueries();
+            document.getElementById("queryName").value = "";
+        }
+
+        function deleteQuery(index) {
+            if (confirm("Ushbu queryni o‘chirishni xohlaysizmi?")) {
+                var queries = getQueries();
+                queries.splice(index, 1); 
+                localStorage.setItem("savedQueries", JSON.stringify(queries));
+                loadQueries();
+            }
+        }
+
+        function loadQueries() {
+            var list = document.getElementById("queriesList");
+            list.innerHTML = "";
+            var queries = getQueries();
+
+            if (queries.length > 0) {
+                queries.forEach((q, idx) => {
+                    if (!q || !q.name) return;
+
+                    var li = document.createElement("li");
+                    li.className = "list-group-item d-flex justify-content-between align-items-center";
+
+                    var span = document.createElement("span");
+                    span.innerHTML = `<strong>${q.name}</strong>`;
+                    span.style.cursor = "pointer";
+                    span.onclick = function () {
+                        document.getElementById("sqlQuery").value = q.sql;
+                    };
+
+                    var delBtn = document.createElement("button");
+                    delBtn.className = "btn btn-sm btn-outline-danger";
+                    delBtn.innerHTML = "❌";
+                    delBtn.onclick = function (e) {
+                        e.stopPropagation(); 
+                        deleteQuery(idx);
+                    };
+
+                    li.appendChild(span);
+                    li.appendChild(delBtn);
+                    list.appendChild(li);
+                });
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", loadQueries);
+    </script>
 }
