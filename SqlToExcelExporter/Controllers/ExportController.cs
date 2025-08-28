@@ -2,10 +2,10 @@
 using Microsoft.AspNetCore.Mvc;
 using SqlToExcelExporter.Models;
 using System.Collections.Generic;
-using System.Data;
 using System.Data.SqlClient;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SqlToExcelExporter.Controllers
 {
@@ -18,7 +18,7 @@ namespace SqlToExcelExporter.Controllers
         }
 
         [HttpPost]
-        public IActionResult Index(ExportRequest request)
+        public async Task<IActionResult> Index(ExportRequest request)
         {
             if (string.IsNullOrWhiteSpace(request.ConnectionString) ||
                 string.IsNullOrWhiteSpace(request.SqlQuery) ||
@@ -30,15 +30,14 @@ namespace SqlToExcelExporter.Controllers
 
             using (SqlConnection conn = new SqlConnection(request.ConnectionString))
             {
-                conn.Open();
+                await conn.OpenAsync();
                 using (SqlCommand cmd = new SqlCommand(request.SqlQuery, conn))
-                using (SqlDataReader reader = cmd.ExecuteReader())
+                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
                 using (var workbook = new XLWorkbook())
                 {
                     int maxRowsPerSheet = 1_000_000;
                     int sheetIndex = 1;
 
-                    // Column names olish
                     var columnNames = Enumerable.Range(0, reader.FieldCount)
                                                 .Select(reader.GetName)
                                                 .ToList();
@@ -46,7 +45,7 @@ namespace SqlToExcelExporter.Controllers
                     var rowsBuffer = new List<object[]>();
                     int totalRow = 0;
 
-                    while (reader.Read())
+                    while (await reader.ReadAsync())
                     {
                         var row = new object[reader.FieldCount];
                         reader.GetValues(row);
@@ -68,7 +67,7 @@ namespace SqlToExcelExporter.Controllers
 
                     using (var stream = new MemoryStream())
                     {
-                        workbook.SaveAs(stream);
+                        workbook.SaveAs(stream); 
                         var content = stream.ToArray();
                         return File(content,
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -86,7 +85,6 @@ namespace SqlToExcelExporter.Controllers
                 ws.Cell(1, i + 1).Value = headers[i];
 
             ws.Cell(2, 1).InsertData(rows);
-
             ws.Columns().AdjustToContents();
         }
     }
