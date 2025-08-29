@@ -1,18 +1,39 @@
-﻿using ClosedXML.Excel;
+﻿using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using SqlToExcelExporter.Models;
+using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace SqlToExcelExporter.Controllers
 {
+    public class QueryItem
+    {
+        public string Name { get; set; }
+        public string Sql { get; set; }
+    }
+
     public class ExportController : Controller
     {
         private static int ProgressCount = 0;
         private static bool ExportDone = false;
+        private static int TotalRows = 0;
+
+        private readonly IWebHostEnvironment _env;
+        private string QueriesFile => Path.Combine(_env.WebRootPath, "queries.json");
+
+        public ExportController(IWebHostEnvironment env)
+        {
+            _env = env;
+        }
 
         [HttpGet]
         public IActionResult Index()
@@ -23,7 +44,56 @@ namespace SqlToExcelExporter.Controllers
         [HttpGet]
         public IActionResult GetProgress()
         {
-            return Json(new { rows = ProgressCount, done = ExportDone });
+            return Json(new { rows = ProgressCount, done = ExportDone, total = TotalRows });
+        }
+
+        [HttpGet]
+        public IActionResult GetSavedQueries()
+        {
+            if (!System.IO.File.Exists(QueriesFile))
+                return Json(new List<QueryItem>());
+
+            var json = System.IO.File.ReadAllText(QueriesFile);
+            var queries = JsonSerializer.Deserialize<List<QueryItem>>(json);
+            return Json(queries ?? new List<QueryItem>());
+        }
+
+        [HttpPost]
+        public IActionResult SaveQuery([FromBody] QueryItem query)
+        {
+            if (string.IsNullOrWhiteSpace(query?.Name) || string.IsNullOrWhiteSpace(query.Sql))
+                return BadRequest("Query nomi va SQL bo‘sh bo‘lmasligi kerak");
+
+            List<QueryItem> queries = new List<QueryItem>();
+            if (System.IO.File.Exists(QueriesFile))
+            {
+                var json = System.IO.File.ReadAllText(QueriesFile);
+                queries = JsonSerializer.Deserialize<List<QueryItem>>(json) ?? new List<QueryItem>();
+            }
+
+            if (queries.Count >= 500) queries.RemoveAt(0);
+
+            queries.Add(query);
+            System.IO.File.WriteAllText(QueriesFile, JsonSerializer.Serialize(queries));
+
+            return Ok(new { success = true });
+        }
+
+        [HttpPost]
+        public IActionResult DeleteQuery([FromBody] int index)
+        {
+            if (!System.IO.File.Exists(QueriesFile))
+                return NotFound();
+
+            var json = System.IO.File.ReadAllText(QueriesFile);
+            var queries = JsonSerializer.Deserialize<List<QueryItem>>(json) ?? new List<QueryItem>();
+
+            if (index < 0 || index >= queries.Count)
+                return BadRequest();
+
+            queries.RemoveAt(index);
+            System.IO.File.WriteAllText(QueriesFile, JsonSerializer.Serialize(queries));
+            return Ok(new { success = true });
         }
 
         [HttpPost]
@@ -39,69 +109,146 @@ namespace SqlToExcelExporter.Controllers
 
             ProgressCount = 0;
             ExportDone = false;
+            TotalRows = 0;
+            List<byte[]> excelFiles = new List<byte[]>();
 
             using (SqlConnection conn = new SqlConnection(request.ConnectionString))
             {
                 await conn.OpenAsync();
-                using (SqlCommand cmd = new SqlCommand(request.SqlQuery, conn))
-                using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
-                using (var workbook = new XLWorkbook())
+
+                using (SqlCommand countCmd = new SqlCommand($"SELECT COUNT(*) FROM ({request.SqlQuery}) AS t", conn))
                 {
-                    int maxRowsPerSheet = 1_000_000;
-                    int sheetIndex = 1;
+                    TotalRows = (int)await countCmd.ExecuteScalarAsync();
+                }
 
-                    var columnNames = Enumerable.Range(0, reader.FieldCount)
-                                                .Select(reader.GetName)
-                                                .ToList();
-
-                    var rowsBuffer = new List<object[]>();
-                    int totalRow = 0;
-
-                    while (await reader.ReadAsync())
+                using (SqlCommand cmd = new SqlCommand(request.SqlQuery, conn))
+                {
+                    cmd.CommandTimeout = 600;
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
                     {
-                        var row = new object[reader.FieldCount];
-                        reader.GetValues(row);
-                        rowsBuffer.Add(row);
-                        totalRow++;
+                        int maxRowsPerFile = 1_000_000;
+                        int rowCount = 0;
+                        int fileIndex = 1;
 
-                        ProgressCount = totalRow; 
+                        MemoryStream ms = null;
+                        SpreadsheetDocument document = null;
+                        WorkbookPart workbookPart = null;
+                        OpenXmlWriter writer = null;
 
-                        if (rowsBuffer.Count == maxRowsPerSheet)
+                        List<string> headers = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToList();
+
+                        Action CloseCurrentFile = () =>
                         {
-                            WriteSheet(workbook, "Sheet" + sheetIndex, columnNames, rowsBuffer);
-                            rowsBuffer.Clear();
-                            sheetIndex++;
+                            if (writer != null)
+                            {
+                                writer.WriteEndElement(); // SheetData
+                                writer.WriteEndElement(); // Worksheet
+                                writer.Close();
+                                writer = null;
+                            }
+
+                            if (workbookPart != null)
+                                workbookPart.Workbook.Save();
+
+                            if (document != null)
+                            {
+                                document.Dispose(); 
+                                document = null;
+                            }
+
+                            if (ms != null)
+                            {
+                                excelFiles.Add(ms.ToArray());
+                                ms.Dispose();
+                                ms = null;
+                            }
+
+                            fileIndex++;
+                        };
+
+                        void StartNewFile()
+                        {
+                            ms = new MemoryStream();
+                            document = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook);
+                            workbookPart = document.AddWorkbookPart();
+                            workbookPart.Workbook = new Workbook();
+                            Sheets sheets = workbookPart.Workbook.AppendChild(new Sheets());
+
+                            var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                            writer = OpenXmlWriter.Create(worksheetPart);
+
+                            writer.WriteStartElement(new Worksheet());
+                            writer.WriteStartElement(new SheetData());
+
+                            // Header yozamiz
+                            WriteRow(writer, headers);
+
+                            sheets.Append(new Sheet()
+                            {
+                                Id = workbookPart.GetIdOfPart(worksheetPart),
+                                SheetId = 1,
+                                Name = "Data"
+                            });
+
+                            rowCount = 0;
                         }
-                    }
 
-                    if (rowsBuffer.Count > 0)
-                    {
-                        WriteSheet(workbook, "Sheet" + sheetIndex, columnNames, rowsBuffer);
-                    }
+                        StartNewFile();
 
-                    ExportDone = true;
+                        while (await reader.ReadAsync())
+                        {
+                            var values = new string[reader.FieldCount];
+                            for (int i = 0; i < reader.FieldCount; i++)
+                                values[i] = reader.IsDBNull(i) ? "" : reader[i].ToString();
 
-                    using (var stream = new MemoryStream())
-                    {
-                        workbook.SaveAs(stream);
-                        var content = stream.ToArray();
-                        return File(content,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            request.FileName + ".xlsx");
+                            WriteRow(writer, values);
+                            rowCount++;
+                            ProgressCount++;
+
+                            if (rowCount >= maxRowsPerFile)
+                            {
+                                CloseCurrentFile();
+                                StartNewFile();
+                            }
+                        }
+
+                        CloseCurrentFile();
+                        ExportDone = true;
                     }
                 }
             }
+
+            using (var zipStream = new MemoryStream())
+            {
+                using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, true))
+                {
+                    for (int i = 0; i < excelFiles.Count; i++)
+                    {
+                        var entry = archive.CreateEntry($"{request.FileName}_{i + 1}.xlsx");
+                        using (var entryStream = entry.Open())
+                        {
+                            entryStream.Write(excelFiles[i], 0, excelFiles[i].Length);
+                        }
+                    }
+                }
+
+                zipStream.Position = 0;
+                return File(zipStream.ToArray(), "application/zip", request.FileName + ".zip");
+            }
         }
 
-        private void WriteSheet(XLWorkbook workbook, string sheetName, List<string> headers, List<object[]> rows)
+        private void WriteRow(OpenXmlWriter writer, IEnumerable<string> values)
         {
-            var ws = workbook.Worksheets.Add(sheetName);
-
-            for (int i = 0; i < headers.Count; i++)
-                ws.Cell(1, i + 1).Value = headers[i];
-
-            ws.Cell(2, 1).InsertData(rows);
-            ws.Columns().AdjustToContents();
+            writer.WriteStartElement(new Row());
+            foreach (var value in values)
+            {
+                writer.WriteElement(new Cell()
+                {
+                    DataType = CellValues.String,
+                    CellValue = new CellValue(value ?? string.Empty)
+                });
+            }
+            writer.WriteEndElement();
         }
     }
 }

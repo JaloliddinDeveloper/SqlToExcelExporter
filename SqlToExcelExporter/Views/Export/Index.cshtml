@@ -7,17 +7,17 @@
         <form asp-action="Index" method="post" onsubmit="showProgress()">
             <div class="mb-3">
                 <label class="form-label fw-bold">Database Connection String</label>
-                <input asp-for="ConnectionString" class="form-control w-75" />
+                <input asp-for="ConnectionString" class="form-control w-75" required />
             </div>
 
             <div class="mb-3">
                 <label class="form-label fw-bold">SQL Query</label>
-                <textarea asp-for="SqlQuery" id="sqlQuery" rows="6" class="form-control w-75"></textarea>
+                <textarea asp-for="SqlQuery" id="sqlQuery" rows="6" class="form-control w-75" required></textarea>
             </div>
 
             <div class="mb-3">
                 <label class="form-label fw-bold">Query Name</label>
-                <input type="text" id="queryName" class="form-control w-75" placeholder="Masalan: Top 100 Students" />
+                <input type="text" id="queryName" class="form-control w-75" placeholder="Masalan: Top 100 Students" required />
             </div>
 
             <div class="mb-3">
@@ -26,7 +26,7 @@
 
             <div class="mb-3">
                 <label class="form-label fw-bold">Excel File Name</label>
-                <input asp-for="FileName" class="form-control w-50" placeholder="Masalan: Report_2025" />
+                <input asp-for="FileName" class="form-control w-50" placeholder="Masalan: Report_2025" required />
             </div>
 
             <button type="submit" class="btn btn-primary fw-bold px-4">🚀 Export to Excel</button>
@@ -62,44 +62,13 @@
 
 @section Scripts {
     <script>
-        function getQueries() {
-            return JSON.parse(localStorage.getItem("savedQueries") || "[]")
-                .filter(q => q && q.name && q.sql);
-        }
+        // Serverdan saqlangan querylarni olish
+        async function loadQueries() {
+            let res = await fetch('/Export/GetSavedQueries');
+            let queries = await res.json();
 
-        function saveQuery() {
-            let sql = document.getElementById("sqlQuery").value.trim();
-            let name = document.getElementById("queryName").value.trim();
-
-            if (!sql) return alert("❌ SQL query yozilmagan!");
-            if (!name) return alert("❌ Query nomini yozing!");
-
-            let queries = getQueries();
-
-            if (queries.length >= 10) {
-                queries.shift(); 
-            }
-            queries.push({ name: name, sql: sql });
-
-            localStorage.setItem("savedQueries", JSON.stringify(queries));
-            loadQueries();
-
-            document.getElementById("queryName").value = "";
-        }
-
-        function deleteQuery(index) {
-            if (confirm("Ushbu queryni o‘chirishni xohlaysizmi?")) {
-                let queries = getQueries();
-                queries.splice(index, 1);
-                localStorage.setItem("savedQueries", JSON.stringify(queries));
-                loadQueries();
-            }
-        }
-
-        function loadQueries() {
             let list = document.getElementById("queriesList");
             list.innerHTML = "";
-            let queries = getQueries();
 
             if (queries.length === 0) {
                 list.innerHTML = "<li class='list-group-item text-muted'>Hech qanday query saqlanmagan</li>";
@@ -115,7 +84,6 @@
                 span.style.cursor = "pointer";
                 span.onclick = () => {
                     document.getElementById("sqlQuery").value = q.sql;
-
                     document.querySelectorAll("#queriesList li").forEach(x => x.classList.remove("active"));
                     li.classList.add("active");
                 };
@@ -123,7 +91,18 @@
                 let delBtn = document.createElement("button");
                 delBtn.className = "btn btn-sm btn-outline-danger";
                 delBtn.innerHTML = "❌";
-                delBtn.onclick = e => { e.stopPropagation(); deleteQuery(idx); };
+                delBtn.onclick = async e => {
+                    e.stopPropagation();
+                    if (!confirm("Ushbu queryni o‘chirishni xohlaysizmi?")) return;
+
+                    await fetch('/Export/DeleteQuery', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(idx)
+                    });
+
+                    loadQueries();
+                };
 
                 li.appendChild(span);
                 li.appendChild(delBtn);
@@ -131,32 +110,52 @@
             });
         }
 
+        // Serverga queryni saqlash
+        async function saveQuery() {
+            let sql = document.getElementById("sqlQuery").value.trim();
+            let name = document.getElementById("queryName").value.trim();
+
+            if (!sql) return alert("❌ SQL query yozilmagan!");
+            if (!name) return alert("❌ Query nomini yozing!");
+
+            await fetch('/Export/SaveQuery', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, sql: sql })
+            });
+
+            document.getElementById("queryName").value = "";
+            loadQueries();
+        }
+
+        // Progressni so‘rab turish
         let progressTimer = null;
+        async function pollProgress() {
+            try {
+                let res = await fetch('/Export/GetProgress');
+                let data = await res.json();
 
-        function pollProgress() {
-            fetch('/Export/GetProgress')
-                .then(r => r.json())
-                .then(data => {
-                    let bar = document.getElementById("progressBar");
-                    let txt = document.getElementById("progressText");
+                let bar = document.getElementById("progressBar");
+                let txt = document.getElementById("progressText");
 
-                    if (data.done) {
-                        clearTimeout(progressTimer);
-                        txt.innerText = "✅ Eksport yakunlandi!";
-                        bar.style.width = "100%";
-                        bar.innerText = "100%";
-                        bar.classList.remove("progress-bar-animated");
-                        return;
-                    }
+                if (data.done) {
+                    clearTimeout(progressTimer);
+                    txt.innerText = "✅ Eksport yakunlandi!";
+                    bar.style.width = "100%";
+                    bar.innerText = "100%";
+                    bar.classList.remove("progress-bar-animated");
+                    return;
+                }
 
-                    let percent = data.total > 0 ? Math.floor((data.rows / data.total) * 100) : 0;
-                    bar.style.width = percent + "%";
-                    bar.innerText = percent + "%";
-                    txt.innerText = `⏳ ${data.rows.toLocaleString()} qator ko‘chirildi...`;
-                })
-                .catch(() => clearTimeout(progressTimer));
+                let percent = data.total > 0 ? Math.floor((data.rows / data.total) * 100) : 0;
+                bar.style.width = percent + "%";
+                bar.innerText = percent + "%";
+                txt.innerText = `⏳ ${data.rows.toLocaleString()} qator ko‘chirildi...`;
 
-            progressTimer = setTimeout(pollProgress, 1000);
+                progressTimer = setTimeout(pollProgress, 1000);
+            } catch {
+                clearTimeout(progressTimer);
+            }
         }
 
         function showProgress() {
