@@ -21,6 +21,11 @@
             </div>
 
             <div class="mb-3">
+                <label class="form-label fw-bold">Query Folder / Category</label>
+                <input type="text" id="queryCategory" class="form-control w-75" placeholder="Masalan: Finance, HR, Reports" />
+            </div>
+
+            <div class="mb-3">
                 <button type="button" class="btn btn-secondary" onclick="saveQuery()">💾 Save Query</button>
             </div>
 
@@ -62,7 +67,7 @@
 
 @section Scripts {
     <script>
-        // Serverdan saqlangan querylarni olish
+        // 📥 Saqlangan querylarni yuklash (kategoriya bo‘yicha accordion bilan)
         async function loadQueries() {
             let res = await fetch('/Export/GetSavedQueries');
             let queries = await res.json();
@@ -75,45 +80,73 @@
                 return;
             }
 
-            queries.forEach((q, idx) => {
-                let li = document.createElement("li");
-                li.className = "list-group-item d-flex justify-content-between align-items-center";
+            let grouped = {};
+            queries.forEach(q => {
+                let cat = q.category || "📁 Boshqa";
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push(q);
+            });
 
-                let span = document.createElement("span");
-                span.innerHTML = `<strong>${q.name}</strong>`;
-                span.style.cursor = "pointer";
-                span.onclick = () => {
-                    document.getElementById("sqlQuery").value = q.sql;
-                    document.querySelectorAll("#queriesList li").forEach(x => x.classList.remove("active"));
-                    li.classList.add("active");
+            Object.keys(grouped).forEach(category => {
+                // 📂 Header (kategoriya bosilsa ichidagilar ko‘rinadi)
+                let catHeader = document.createElement("li");
+                catHeader.className = "list-group-item bg-primary text-white fw-bold";
+                catHeader.style.cursor = "pointer";
+                catHeader.innerHTML = `📁 ${category}`;
+
+                let queryListDiv = document.createElement("div");
+                queryListDiv.className = "ms-2 d-none"; // initially hidden
+
+                catHeader.onclick = () => {
+                    queryListDiv.classList.toggle("d-none");
                 };
 
-                let delBtn = document.createElement("button");
-                delBtn.className = "btn btn-sm btn-outline-danger";
-                delBtn.innerHTML = "❌";
-                delBtn.onclick = async e => {
-                    e.stopPropagation();
-                    if (!confirm("Ushbu queryni o‘chirishni xohlaysizmi?")) return;
+                list.appendChild(catHeader);
+                list.appendChild(queryListDiv);
 
-                    await fetch('/Export/DeleteQuery', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(idx)
-                    });
+                grouped[category].forEach((q) => {
+                    let li = document.createElement("li");
+                    li.className = "list-group-item d-flex justify-content-between align-items-center";
 
-                    loadQueries();
-                };
+                    let span = document.createElement("span");
+                    span.innerHTML = `<strong>${q.name}</strong>`;
+                    span.style.cursor = "pointer";
+                    span.onclick = () => {
+                        document.getElementById("sqlQuery").value = q.sql;
+                        document.getElementById("queryName").value = q.name;
+                        document.getElementById("queryCategory").value = q.category || "";
+                        document.querySelectorAll("#queriesList li").forEach(x => x.classList.remove("active"));
+                        li.classList.add("active");
+                    };
 
-                li.appendChild(span);
-                li.appendChild(delBtn);
-                list.appendChild(li);
+                    let delBtn = document.createElement("button");
+                    delBtn.className = "btn btn-sm btn-outline-danger";
+                    delBtn.innerHTML = "❌";
+                    delBtn.onclick = async e => {
+                        e.stopPropagation();
+                        if (!confirm("Ushbu queryni o‘chirishni xohlaysizmi?")) return;
+
+                        await fetch('/Export/DeleteQuery', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: q.name, category: q.category })
+                        });
+
+                        loadQueries();
+                    };
+
+                    li.appendChild(span);
+                    li.appendChild(delBtn);
+                    queryListDiv.appendChild(li);
+                });
             });
         }
 
-        // Serverga queryni saqlash
+        // 📥 Saqlash
         async function saveQuery() {
             let sql = document.getElementById("sqlQuery").value.trim();
             let name = document.getElementById("queryName").value.trim();
+            let category = document.getElementById("queryCategory").value.trim();
 
             if (!sql) return alert("❌ SQL query yozilmagan!");
             if (!name) return alert("❌ Query nomini yozing!");
@@ -121,14 +154,15 @@
             await fetch('/Export/SaveQuery', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name, sql: sql })
+                body: JSON.stringify({ name: name, sql: sql, category: category })
             });
 
             document.getElementById("queryName").value = "";
+            document.getElementById("queryCategory").value = "";
             loadQueries();
         }
 
-        // Progressni so‘rab turish
+        // 📊 Progress bar
         let progressTimer = null;
         async function pollProgress() {
             try {

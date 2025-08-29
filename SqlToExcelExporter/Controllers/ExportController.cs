@@ -15,10 +15,19 @@ using System.Threading.Tasks;
 
 namespace SqlToExcelExporter.Controllers
 {
+    // 🔸 Yangi model — Kategoriyali query
     public class QueryItem
     {
         public string Name { get; set; }
         public string Sql { get; set; }
+        public string Category { get; set; }
+    }
+
+    // 🔸 O‘chirish uchun model
+    public class DeleteQueryRequest
+    {
+        public string Name { get; set; }
+        public string Category { get; set; }
     }
 
     public class ExportController : Controller
@@ -71,6 +80,11 @@ namespace SqlToExcelExporter.Controllers
                 queries = JsonSerializer.Deserialize<List<QueryItem>>(json) ?? new List<QueryItem>();
             }
 
+            // Avvalgi query’ni yangilaymiz (name + category bo‘yicha)
+            queries.RemoveAll(q =>
+                string.Equals(q.Name, query.Name, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(q.Category ?? "", query.Category ?? "", StringComparison.OrdinalIgnoreCase));
+
             if (queries.Count >= 500) queries.RemoveAt(0);
 
             queries.Add(query);
@@ -80,7 +94,7 @@ namespace SqlToExcelExporter.Controllers
         }
 
         [HttpPost]
-        public IActionResult DeleteQuery([FromBody] int index)
+        public IActionResult DeleteQuery([FromBody] DeleteQueryRequest req)
         {
             if (!System.IO.File.Exists(QueriesFile))
                 return NotFound();
@@ -88,10 +102,13 @@ namespace SqlToExcelExporter.Controllers
             var json = System.IO.File.ReadAllText(QueriesFile);
             var queries = JsonSerializer.Deserialize<List<QueryItem>>(json) ?? new List<QueryItem>();
 
-            if (index < 0 || index >= queries.Count)
-                return BadRequest();
+            int removed = queries.RemoveAll(q =>
+                string.Equals(q.Name, req.Name, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(q.Category ?? "", req.Category ?? "", StringComparison.OrdinalIgnoreCase));
 
-            queries.RemoveAt(index);
+            if (removed == 0)
+                return NotFound();
+
             System.IO.File.WriteAllText(QueriesFile, JsonSerializer.Serialize(queries));
             return Ok(new { success = true });
         }
@@ -152,7 +169,7 @@ namespace SqlToExcelExporter.Controllers
 
                             if (document != null)
                             {
-                                document.Dispose(); 
+                                document.Dispose();
                                 document = null;
                             }
 
